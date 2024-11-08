@@ -16,7 +16,7 @@ This project is build on top of work by `ninesleep`, see [Credits](#credits-).
 To use Ten Sleep you must disassemble the Eight Sleep Pod 3, modify the SD card's `rootfs.tar.gz`
 to add your SSH key + root password, and reset the Pod. Then power the Pod while holding the small
 button on the back, which performs a factory reset from `rootfs.tar.gz`. Now you can disable
-Eight Sleep's update service and [Add Ten Sleep](#adding-ten-sleep).
+Eight Sleep's update service and [Add Ten Sleep](#adding-ten-sleep-).
  - __Note__: the default SSH port for Pod 3 is `8822`.
  - __Disable Updates__: `systemctl disable --now swupdate-progress swupdate defibrillator eight-kernel telegraf vector`
 
