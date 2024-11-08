@@ -4,7 +4,7 @@ Control the Eight Sleep Pod 3 locally and automatically!
 This project uses the Pod's existing firmware (`frankenfirmware`) but replaces the DAC and PizzaRat (& Capybara for now).
 Once setup, you __CANNOT__ use the Eight Sleep mobile app to control the bed.
 
-This project is build on top of work by `ninesleep`, see [[#Credits 👏]]
+This project is build on top of work by `ninesleep`, see [Credits](#credits-).
 
 ## Features 😴
  1. Automatically set bed temperature every night
@@ -16,7 +16,7 @@ This project is build on top of work by `ninesleep`, see [[#Credits 👏]]
 To use Ten Sleep you must disassemble the Eight Sleep Pod 3, modify the SD card's `rootfs.tar.gz`
 to add your SSH key + root password, and reset the Pod. Then power the Pod while holding the small
 button on the back, which performs a factory reset from `rootfs.tar.gz`. Now you can disable
-Eight Sleep's update service and add [[#Adding Ten Sleep 🔟]].
+Eight Sleep's update service and [Add Ten Sleep](#adding-ten-sleep).
  - __Note__: the default SSH port for Pod 3 is `8822`.
  - __Disable Updates__: `systemctl disable --now swupdate-progress swupdate defibrillator eight-kernel telegraf vector`
 
