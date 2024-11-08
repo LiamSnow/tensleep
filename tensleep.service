@@ -1,5 +1,5 @@
 [Unit]
-Description=Ninesleep
+Description=Tensleep
 Requires=capybara.service
 
 [Install]
@@ -12,3 +12,5 @@ Environment="RUST_LOG=info"
 Environment="ROCKET_LOG_LEVEL=normal"
 Environment="RUST_BACKTRACE=1"
 ExecStartPre=-rm /deviceinfo/dac.sock
+ExecStart=/opt/tensleep/tensleep
+Restart=always

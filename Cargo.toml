@@ -1,5 +1,5 @@
 [package]
-name = "ninesleep"
+name = "tensleep"
 version = "0.1.0"
 edition = "2021"
 
