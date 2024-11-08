@@ -48,7 +48,7 @@ TODO
 
 ## Credits 👏
 This project is built on top of the work done by [ninesleep](https://github.com/bobobo1618/ninesleep).
-His license is included under `src/frank/LICENSE` where a modified version of their code exists.
+Their license is included under [src/frank/LICENSE](src/frank/LICENSE) where a modified version of their code exists.
 
 ## Footnotes 📝
 This project is not affiliated with or endorsed by Eight Sleep.
