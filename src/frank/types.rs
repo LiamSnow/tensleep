@@ -1,18 +1,9 @@
 
-use cbor::{Encoder, ToCbor};
-use chrono::{DateTime, Utc};
-use log::{info, warn};
-use rustc_serialize::{json::Json, Encodable};
-use std::{
-    io::{BufReader, BufWriter, Read, Write},
-    net::{TcpListener, TcpStream},
-    os::unix::net::{UnixListener, UnixStream},
-    sync::{Arc, RwLock},
-    thread,
-    time::Duration,
-};
+use chrono::{serde::ts_seconds, DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum VibrationPattern {
     ///heavy
     Double,

@@ -96,14 +96,14 @@ pub fn get_variables(streamobj: &DacStream) -> String {
 // du: Duration in seconds?
 // tt: Timestamp in unix epoch for alarm
 // Presumably thermal alarm is controlled with the temperature commands
-pub fn set_alarm(side: BedSide, data: AlarmSettings, streamobj: &DacStream) -> String {
+pub fn set_alarm(side: BedSide, settings: &AlarmSettings, streamobj: &DacStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
 
     if side == BedSide::Both {
-        set_alarm(BedSide::Left, data, streamobj);
-        return set_alarm(BedSide::Right, data, streamobj);
+        set_alarm(BedSide::Left, settings, streamobj);
+        return set_alarm(BedSide::Right, settings, streamobj);
     }
 
     let command = match side {
@@ -112,10 +112,8 @@ pub fn set_alarm(side: BedSide, data: AlarmSettings, streamobj: &DacStream) -> S
         BedSide::Both => panic!()
     };
 
-    // rocket::serde::json::Json<AlarmSettings>
-    let data = data.into_inner();
     let mut bincbor = Vec::<u8>::new();
-    ciborium::into_writer(&data, &mut bincbor).unwrap();
+    ciborium::into_writer(settings, &mut bincbor).unwrap();
     let serializeddata = hex::encode(bincbor);
 
     let mut streamoption = streamobj.write().unwrap();

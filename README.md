@@ -1,7 +1,7 @@
 # Ten Sleep 🛌💤🔟
 Control the Eight Sleep Pod 3 locally and automatically!
 
-This project uses the Pod's existing firmware (`frankenfirmware`) but replaces the DAC and PizzaRat (& Capybara for now).
+This project uses the Pod's existing firmware (`frankenfirmware`) but replaces the DAC and disables PizzaRat (& Capybara for now).
 Once setup, you __CANNOT__ use the Eight Sleep mobile app to control the bed.
 
 This project is build on top of work by `ninesleep`, see [Credits](#credits-).
