@@ -12,9 +12,9 @@ use std::{
 
 use crate::frank::types::*;
 
-type DacStream = Arc<RwLock<Option<UnixStream>>>;
+pub type FrankStream = Arc<RwLock<Option<UnixStream>>>;
 
-pub fn init() -> DacStream {
+pub fn init() -> FrankStream {
     let stream = Arc::new(RwLock::<Option<UnixStream>>::new(None));
 
     let streamcopy = stream.clone();
@@ -53,7 +53,7 @@ pub fn init() -> DacStream {
 }
 
 // Just returns "ok" to show that communication with the firmware is working.
-pub fn hello(streamobj: &DacStream) -> String {
+pub fn hello(streamobj: &FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -77,7 +77,7 @@ pub fn hello(streamobj: &DacStream) -> String {
 // waterLevel = true
 // priming = false
 // settings = "BF61760162676C190190626772190190626C6200FF"
-pub fn get_variables(streamobj: &DacStream) -> String {
+pub fn get_variables(streamobj: &FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -96,7 +96,7 @@ pub fn get_variables(streamobj: &DacStream) -> String {
 // du: Duration in seconds?
 // tt: Timestamp in unix epoch for alarm
 // Presumably thermal alarm is controlled with the temperature commands
-pub fn set_alarm(side: BedSide, settings: &AlarmSettings, streamobj: &DacStream) -> String {
+pub fn set_alarm(side: BedSide, settings: &AlarmSettings, streamobj: &FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -125,7 +125,7 @@ pub fn set_alarm(side: BedSide, settings: &AlarmSettings, streamobj: &DacStream)
     result
 }
 
-pub fn alarm_clear(streamobj: &DacStream) -> String {
+pub fn alarm_clear(streamobj: &FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -139,7 +139,7 @@ pub fn alarm_clear(streamobj: &DacStream) -> String {
 }
 
 // Example CBOR: a1626c6200, a1626c621837. Controls light intensity.
-pub fn set_settings(data: &str, streamobj: &DacStream) -> String {
+pub fn set_settings(data: &str, streamobj: &FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -160,7 +160,7 @@ pub fn set_settings(data: &str, streamobj: &DacStream) -> String {
 }
 
 // Takes an integer number of seconds, presumably until the heat ends, e.g. 7200.
-pub fn set_temperature_duration(side: BedSide, data: u32, streamobj: &DacStream) -> String {
+pub fn set_temperature_duration(side: BedSide, data: u32, streamobj: &FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -186,7 +186,7 @@ pub fn set_temperature_duration(side: BedSide, data: u32, streamobj: &DacStream)
 }
 
 // Takes a signed integer number. May represent tenths of degrees of heating/cooling. e.g. -40 = -4°C.
-pub fn set_temperature(side: BedSide, data: i32, streamobj: &DacStream) -> String {
+pub fn set_temperature(side: BedSide, data: i32, streamobj: &FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -212,7 +212,7 @@ pub fn set_temperature(side: BedSide, data: i32, streamobj: &DacStream) -> Strin
 }
 
 // Takes a boolean string. Unclear what true/false mean exactly, maybe on/off?
-pub fn prime(streamobj: DacStream) -> String {
+pub fn prime(streamobj: FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }

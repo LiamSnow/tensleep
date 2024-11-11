@@ -1,4 +1,4 @@
-use chrono::NaiveTime;
+use chrono::{NaiveTime, TimeDelta};
 use chrono_tz::Tz;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fs, str::FromStr};
@@ -7,12 +7,15 @@ use crate::VibrationPattern;
 
 pub type TempProfile = [i32; 3];
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Settings {
-    ///offset from "neutral" temperature. degrees C * 10 (IE 10C -> 100)
+    ///offset from "neutral" temperature, °C*10 (IE -40 -> -4°C)
     pub temp_profile: TempProfile,
     pub time_zone: Tz,
-    #[serde(deserialize_with = "deserialize_time", serialize_with = "serialize_time")]
+    #[serde(
+        deserialize_with = "deserialize_time",
+        serialize_with = "serialize_time"
+    )]
     pub sleep_time: NaiveTime,
     pub alarm: AlarmSettings,
 }
@@ -30,31 +33,50 @@ impl Settings {
     pub fn serialize(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
+
+    pub fn save(&self, path: &str) -> std::io::Result<()> {
+        let json = self.serialize()?;
+        fs::write(path, json)
+    }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AlarmSettings {
-    #[serde(deserialize_with = "deserialize_time", serialize_with = "serialize_time")]
+    #[serde(
+        deserialize_with = "deserialize_time",
+        serialize_with = "serialize_time"
+    )]
     pub time: NaiveTime,
     pub vibration: Option<VibrationSettings>,
     pub heat: Option<HeatSettings>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct VibrationSettings {
     pub pattern: VibrationPattern,
     ///0-100
     pub intensity: u8,
     ///seconds
     pub duration: u16,
-    ///minutes before alarm time
+    ///seconds before alarm time
     pub offset: u16,
+}
+
+impl VibrationSettings {
+    pub fn to_frank_alarm_settings(&self, timestamp: u64) -> crate::frank::types::AlarmSettings {
+        crate::frank::types::AlarmSettings {
+            pl: self.intensity,
+            du: self.duration,
+            pi: self.pattern.to_string(),
+            tt: timestamp,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct HeatSettings {
     pub temp: i32,
-    ///minutes before alarm time
+    ///seconds before alarm time
     pub offset: u16,
 }
 
@@ -76,7 +98,8 @@ mod tests {
 
     #[test]
     fn test_deserialize_settings() {
-        let settings = Settings::from_str(r#"
+        let settings = Settings::from_str(
+            r#"
         {
             "temp_profile": [-10, 10, 20],
             "time_zone": "America/Los_Angeles",
@@ -87,15 +110,17 @@ mod tests {
                     "pattern": "rise",
                     "intensity": 80,
                     "duration": 600,
-                    "offset": 5
+                    "offset": 300
                 },
                 "heat": {
                     "temp": 100,
-                    "offset": 30
+                    "offset": 1800
                 }
             }
         }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         assert_eq!(settings.temp_profile, [-10, 10, 20]);
         assert_eq!(settings.time_zone, Tz::America__Los_Angeles);
@@ -112,10 +137,10 @@ mod tests {
         assert!(matches!(vibration.pattern, VibrationPattern::Rise));
         assert_eq!(vibration.intensity, 80);
         assert_eq!(vibration.duration, 600);
-        assert_eq!(vibration.offset, 5);
+        assert_eq!(vibration.offset, 300);
 
         let heat = settings.alarm.heat.unwrap();
         assert_eq!(heat.temp, 100);
-        assert_eq!(heat.offset, 30);
+        assert_eq!(heat.offset, 1800);
     }
 }

@@ -1,47 +1,107 @@
-// extern crate rustc_serialize;
+extern crate rustc_serialize;
 
 mod frank;
+mod scheduler;
 mod settings;
 
-use chrono_tz::Tz;
-use clokwerk::{ScheduleHandle, Scheduler, TimeUnits};
-use clokwerk::Interval::*;
-use std::thread;
-use std::time::Duration;
-
-use frank::manager;
-use frank::types::*;
+use axum::{
+    extract::State,
+    http::{Response, StatusCode},
+    response::IntoResponse,
+    routing::get,
+    Json, Router,
+};
+use frank::{
+    manager::{self, FrankStream},
+    types::*,
+};
+use serde_json::json;
 use settings::Settings;
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio::task::{self, JoinHandle};
 
-#[rocket::main]
+struct AppState {
+    settings: Mutex<Settings>,
+    scheduler_task: Mutex<JoinHandle<()>>,
+}
+
+static STREAM: OnceLock<FrankStream> = OnceLock::new();
+
+const SETTINGS_PATH: &str = "settings.json";
+
+#[tokio::main]
 async fn main() {
     env_logger::init();
-    // let s = manager::init();
+    STREAM.get_or_init(|| manager::init());
 
-    let settings = Settings::from_file("settings.json").unwrap();
-    let handle = schedule(settings).await;
+    let settings = Settings::from_file(SETTINGS_PATH).unwrap();
+    let state = Arc::new(AppState {
+        settings: Mutex::new(settings.clone()),
+        scheduler_task: Mutex::new(task::spawn(scheduler::run(
+            settings,
+            &STREAM.get().unwrap(),
+        ))),
+    });
+
+    let app = Router::new()
+        .route("/health", get(get_health))
+        .route("/settings", get(get_settings).post(post_settings))
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    axum::serve(listener, app.into_make_service())
+        .await
+        .unwrap();
 }
 
-async fn schedule(settings: Settings) -> ScheduleHandle {
-    let mut scheduler = Scheduler::with_tz(settings.time_zone);
-
-    /*
-    Schedules:
-    profile[0]
-    profile[1]
-    profile[2]
-    heat_alarm?
-    alarm?
-    */
-
-    let sleep_time = settings.alarm.time - settings.sleep_time;
-
-    scheduler.every(1.day()).at_time();
-        // .at("3:20 pm").run(|| println!("Daily task"));
-
-    scheduler.watch_thread(Duration::from_secs(1))
+async fn get_health() -> impl IntoResponse {
+    let res = manager::hello(STREAM.get().unwrap());
+    if res == "ok" {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
 }
 
-async fn set_temp() {
+async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let settings = state.settings.lock().unwrap();
+    match settings.serialize() {
+        Ok(serialized) => Json(serialized).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "Failed to serialize settings",
+                "details": e.to_string()
+            })),
+        )
+            .into_response(),
+    }
+}
 
+async fn post_settings(
+    State(state): State<Arc<AppState>>,
+    Json(new_settings): Json<Settings>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.lock().unwrap();
+    *settings = new_settings.clone();
+
+    let mut task = state.scheduler_task.lock().unwrap();
+    task.abort();
+    *task = task::spawn(scheduler::run(new_settings.clone(), &STREAM.get().unwrap()));
+
+    match new_settings.save(SETTINGS_PATH) {
+        Ok(_) => Json(json!({
+            "message": "Settings updated successfully",
+            "settings": new_settings
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "Failed to save settings",
+                "details": e.to_string()
+            })),
+        )
+            .into_response(),
+    }
 }
