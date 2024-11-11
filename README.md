@@ -36,10 +36,10 @@ Until then compile this repo with:
 cargo build --target aarch64-unknown-linux-musl
 ```
 
- 1. `scp` the binary and service (`tensleep.service`) to the Pod
+ 1. `scp` the binary, `tensleep.service`, and `settings.json` to the Pod
  2. `ssh` in, sign in as root
- 3. Move the binary to `/opt/tensleep`
- 4. Move the service file `/etc/systemd/system/multi-user.target.wants`
+ 3. Move the binary and json to `/opt/tensleep`
+ 4. Move the service file `/etc/systemd/system`
  5. Stop the DAC `systemctl stop dac`
  6. Enable the service `systemctl enable --now tensleep`
 

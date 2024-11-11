@@ -8,5 +8,7 @@ WantedBy=multi-user.target
 [Service]
 ExecStartPre=-rm /deviceinfo/dac.sock
 ExecStart=/opt/tensleep/tensleep
+WorkingDirectory=/opt/tensleep
+Environment="RUST_BACKTRACE=1"
 Restart=always
 Type=simple

@@ -36,13 +36,18 @@ async fn main() {
     CombinedLogger::init(
         vec![
             TermLogger::new(LevelFilter::Debug, simplelog::Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
-            WriteLogger::new(LevelFilter::Info, simplelog::Config::default(), File::create("my_app.log").unwrap()),
+            WriteLogger::new(LevelFilter::Debug, simplelog::Config::default(), File::create("tensleep.log").unwrap()),
         ]
     ).unwrap();
 
     info!("Tensleep started. Connecting to stream...");
 
     STREAM.get_or_init(|| manager::init());
+
+    if STREAM.get().unwrap().read().unwrap().is_none() {
+      info!("Failed to connect to stream!");
+      panic!();
+    }
 
     info!("Connected to stream!");
 
