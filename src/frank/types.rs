@@ -19,7 +19,6 @@ impl VibrationPattern {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AlarmSettings {
-    //TODO FIXME
     // pl: Vibration intensity percentage
     pub pl: u8,
     // du: Duration in seconds?

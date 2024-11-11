@@ -1,5 +1,6 @@
 use chrono::{DateTime, Duration, TimeDelta, Utc};
 use chrono_tz::Tz;
+use log::{debug, info};
 use tokio::time;
 
 use crate::{
@@ -14,7 +15,7 @@ pub struct VibrateTiming {
     pub alarm: DateTime<Tz>,
 }
 
-pub struct SchedulerConfig {
+pub struct SchedulerTiming {
     pub time_zone: Tz,
     pub vibrate_time: Option<VibrateTiming>,
     pub profile: Vec<(DateTime<Tz>, i32)>,
@@ -22,27 +23,39 @@ pub struct SchedulerConfig {
 
 const DAY: TimeDelta = chrono::Duration::days(1);
 
-fn calc_times(settings: &Settings) -> SchedulerConfig {
+fn calc_times(settings: &Settings) -> SchedulerTiming {
     let now = Utc::now().with_timezone(&settings.time_zone);
     let tomorrow = now + Duration::days(1);
     let alarm_datetime = tomorrow.with_time(settings.alarm.time).unwrap();
     let sleep_datetime = now.with_time(settings.sleep_time).unwrap();
 
+    debug!("Scheduler Timing: now = {now}, tomorrow = {tomorrow}, alarm_datetime = {alarm_datetime}, sleep_datetime = {sleep_datetime}");
+
     let vibrate_time = settings.alarm.vibration.clone().map(|v| {
         let alarm = alarm_datetime - TimeDelta::seconds(v.offset.into());
+        let set = alarm - Duration::hours(2);
+        let clear = alarm - Duration::hours(4);
 
-        VibrateTiming {
-            clear: alarm - Duration::hours(4),
-            set: alarm - Duration::hours(2),
-            alarm,
-        }
+        debug!(
+            "Scheduler Timing: vibrate_time = (clear: {}, set: {}, alarm: {})",
+            clear, set, alarm
+        );
+
+        VibrateTiming { clear, set, alarm }
     });
 
     let mut total_time = alarm_datetime - sleep_datetime;
+    debug!("Scheduler Timing: total_time = {total_time}");
     if settings.alarm.heat.is_some() {
-        total_time -= TimeDelta::seconds(settings.alarm.heat.clone().unwrap().offset.into());
+        let off = TimeDelta::seconds(settings.alarm.heat.clone().unwrap().offset.into());
+        total_time -= off;
+        debug!(
+            "Scheduler Timing: heat alarm is included -> offsetting total_time by {} to {}",
+            off, total_time
+        );
     }
     let step = total_time / 3;
+    debug!("Scheduler Timing: step = {step}");
     let mut profile = vec![
         (sleep_datetime, settings.temp_profile[0]),
         (sleep_datetime + step, settings.temp_profile[1]),
@@ -53,7 +66,7 @@ fn calc_times(settings: &Settings) -> SchedulerConfig {
         profile.push((alarm_datetime - TimeDelta::seconds(h.offset.into()), h.temp));
     }
 
-    SchedulerConfig {
+    SchedulerTiming {
         vibrate_time,
         time_zone: settings.time_zone,
         profile,
@@ -61,12 +74,15 @@ fn calc_times(settings: &Settings) -> SchedulerConfig {
 }
 
 pub async fn run(settings: Settings, stream: &FrankStream) {
+    info!("Scheduler: starting");
+    info!("Scheduler: calculating timing...");
     let mut times = calc_times(&settings);
     loop {
         let now = Utc::now().with_timezone(&times.time_zone);
 
         if let Some(vt) = &mut times.vibrate_time {
             if now >= vt.clear {
+                info!("Scheduler: clearing vibration alarm");
                 manager::alarm_clear(stream);
                 vt.clear += DAY;
             }
@@ -74,23 +90,29 @@ pub async fn run(settings: Settings, stream: &FrankStream) {
             if now >= vt.set {
                 let ts = vt.alarm.timestamp().try_into().unwrap();
                 let vs = settings.alarm.vibration.clone().unwrap();
-                manager::set_alarm(
-                    BedSide::Both,
-                    &vs.to_frank_alarm_settings(ts),
-                    stream,
-                );
+                let ps = vs.to_frank_alarm_settings(ts);
+                info!("Scheduler: setting vibration alarm for {ts}. Mapped {vs:#?} -> {ps:#?}");
+                manager::set_alarm(BedSide::Both, &ps, stream);
                 vt.alarm += DAY;
                 vt.set += DAY;
             }
         }
 
         for i in 0..times.profile.len() {
-            manager::set_temperature(BedSide::Both, times.profile[i].1, stream);
-            manager::set_temperature_duration(BedSide::Both, 36000, stream); //10 hours
+            info!(
+                "Scheduler: setting temperature to {} for {} seconds",
+                times.profile[i].1, 36000
+            );
+            let r1 = manager::set_temperature(BedSide::Both, times.profile[i].1, stream);
+            let r2 = manager::set_temperature_duration(BedSide::Both, 36000, stream); //10 hours
+            //TODO fix frank error handling
+            info!("Scheduler: setting temperature got res {r1}, {r2}");
             times.profile[i].0 += DAY;
         }
+
+        let vars = manager::get_variables(stream);
+        debug!("Scheduler: loop got vars {vars}");
 
         time::sleep(time::Duration::from_secs(60)).await;
     }
 }
-

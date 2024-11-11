@@ -6,7 +6,7 @@ mod settings;
 
 use axum::{
     extract::State,
-    http::{Response, StatusCode},
+    http::StatusCode,
     response::IntoResponse,
     routing::get,
     Json, Router,
@@ -15,9 +15,11 @@ use frank::{
     manager::{self, FrankStream},
     types::*,
 };
+use log::{info, LevelFilter};
 use serde_json::json;
 use settings::Settings;
-use std::sync::{Arc, Mutex, OnceLock};
+use simplelog::{ColorChoice, CombinedLogger, TermLogger, TerminalMode, WriteLogger};
+use std::{fs::File, sync::{Arc, Mutex, OnceLock}};
 use tokio::task::{self, JoinHandle};
 
 struct AppState {
@@ -31,10 +33,23 @@ const SETTINGS_PATH: &str = "settings.json";
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
+    CombinedLogger::init(
+        vec![
+            TermLogger::new(LevelFilter::Debug, simplelog::Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
+            WriteLogger::new(LevelFilter::Info, simplelog::Config::default(), File::create("my_app.log").unwrap()),
+        ]
+    ).unwrap();
+
+    info!("Tensleep started. Connecting to stream...");
+
     STREAM.get_or_init(|| manager::init());
 
+    info!("Connected to stream!");
+
+    info!("Reading settings file: {SETTINGS_PATH}");
     let settings = Settings::from_file(SETTINGS_PATH).unwrap();
+
+    info!("Spawning scheduler task...");
     let state = Arc::new(AppState {
         settings: Mutex::new(settings.clone()),
         scheduler_task: Mutex::new(task::spawn(scheduler::run(
@@ -43,6 +58,7 @@ async fn main() {
         ))),
     });
 
+    info!("Creating axum router");
     let app = Router::new()
         .route("/health", get(get_health))
         .route("/settings", get(get_settings).post(post_settings))
@@ -56,6 +72,7 @@ async fn main() {
 
 async fn get_health() -> impl IntoResponse {
     let res = manager::hello(STREAM.get().unwrap());
+    info!("Axum: health check got {res}");
     if res == "ok" {
         StatusCode::OK
     } else {
@@ -64,6 +81,7 @@ async fn get_health() -> impl IntoResponse {
 }
 
 async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    info!("Axum: get settings"); //FIXME
     let settings = state.settings.lock().unwrap();
     match settings.serialize() {
         Ok(serialized) => Json(serialized).into_response(),
@@ -82,6 +100,7 @@ async fn post_settings(
     State(state): State<Arc<AppState>>,
     Json(new_settings): Json<Settings>,
 ) -> impl IntoResponse {
+    info!("Axum: set settings to {new_settings:#?}"); //FIXME
     let mut settings = state.settings.lock().unwrap();
     *settings = new_settings.clone();
 

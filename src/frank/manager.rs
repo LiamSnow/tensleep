@@ -22,13 +22,13 @@ pub fn init() -> FrankStream {
         let listener = match UnixListener::bind("/deviceinfo/dac.sock") {
             Ok(listener) => listener,
             Err(error) => {
-                panic!("Failed to listen {:?}", error)
+                panic!("Frank: failed to listen {:?}", error)
             }
         };
         for newstream in listener.incoming() {
             match newstream {
                 Ok(newstream) => {
-                    info!("New UNIX socket connection");
+                    info!("Frank: new UNIX socket connection");
                     let _ = streamcopy.write().unwrap().insert(newstream);
                 }
                 Err(_) => continue,
@@ -109,7 +109,7 @@ pub fn set_alarm(side: BedSide, settings: &AlarmSettings, streamobj: &FrankStrea
     let command = match side {
         BedSide::Left => 5,
         BedSide::Right => 6,
-        BedSide::Both => panic!()
+        BedSide::Both => panic!(),
     };
 
     let mut bincbor = Vec::<u8>::new();
@@ -173,7 +173,7 @@ pub fn set_temperature_duration(side: BedSide, data: u32, streamobj: &FrankStrea
     let command = match side {
         BedSide::Left => 9,
         BedSide::Right => 10,
-        BedSide::Both => panic!()
+        BedSide::Both => panic!(),
     };
 
     let mut streamoption = streamobj.write().unwrap();
@@ -199,7 +199,7 @@ pub fn set_temperature(side: BedSide, data: i32, streamobj: &FrankStream) -> Str
     let command = match side {
         BedSide::Left => 11,
         BedSide::Right => 12,
-        BedSide::Both => panic!()
+        BedSide::Both => panic!(),
     };
 
     let mut streamoption = streamobj.write().unwrap();
@@ -228,7 +228,7 @@ pub fn prime(streamobj: FrankStream) -> String {
 
 fn handle_session(item: StreamItem, writer: &mut dyn Write) {
     info!(
-        "Session started for device {}",
+        "Frank: session started for device {}",
         item.dev.expect("expected device ID")
     );
     let _ = ciborium::into_writer::<StreamItem, &mut dyn Write>(
@@ -249,11 +249,11 @@ fn handle_batch(item: StreamItem, writer: &mut dyn Write) {
     let id = match item.id {
         Some(id) => id,
         None => {
-            warn!("no id was present for batch");
+            warn!("Frank: no id was present for batch");
             return;
         }
     };
-    info!("Received batch {}", id);
+    info!("Frank: received batch {}", id);
     let _ = ciborium::into_writer::<StreamItem, &mut dyn Write>(
         &StreamItem {
             id: Some(id),
@@ -270,7 +270,7 @@ fn handle_batch(item: StreamItem, writer: &mut dyn Write) {
     let datastream = match item.stream {
         Some(stream) => stream,
         None => {
-            warn!("no stream in batch");
+            warn!("Frank: no stream in batch");
             return;
         }
     };
@@ -284,7 +284,7 @@ fn handle_batch(item: StreamItem, writer: &mut dyn Write) {
                 break;
             }
             Err(error) => {
-                warn!("Failed to read batch item: {:?}", error);
+                warn!("Frank: failed to read batch item: {:?}", error);
                 break;
             }
         };
@@ -294,12 +294,12 @@ fn handle_batch(item: StreamItem, writer: &mut dyn Write) {
             Err(_) => {
                 match ciborium::from_reader::<ciborium::Value, &[u8]>(item.data.as_slice()) {
                     Ok(item) => {
-                        warn!("Failed to read batch item data, generic value: {:?}", item);
+                        warn!("Frank: failed to read batch item data, generic value: {:?}", item);
                         continue;
                     }
                     Err(error) => {
                         warn!(
-                            "Failed to read batch item data. Data was {:?}. Error was {:?}",
+                            "Frank: failed to read batch item data. Data was {:?}. Error was {:?}",
                             hex::encode(item.data),
                             error
                         );
@@ -308,12 +308,12 @@ fn handle_batch(item: StreamItem, writer: &mut dyn Write) {
                 };
             }
         };
-        trace!("Batch item {} datum: {:?}", seq, item);
+        trace!("Frank: batch item {} datum: {:?}", seq, item);
     }
 }
 
 fn handle_data_stream(stream: TcpStream) {
-    info!("Incoming TCP connection");
+    info!("Frank: incoming TCP connection");
     let _ = stream.set_read_timeout(Some(Duration::new(60, 0)));
 
     let mut writer = BufWriter::new(&stream);
@@ -325,7 +325,7 @@ fn handle_data_stream(stream: TcpStream) {
             "session" => handle_session(item, &mut writer),
             "batch" => handle_batch(item, &mut writer),
             _ => {
-                warn!("Unrecognized part {:?}", item.part);
+                warn!("Frank: unrecognized part {:?}", item.part);
                 continue;
             }
         }

@@ -8,11 +8,11 @@
       "pattern": "rise",
       "intensity": 80,
       "duration": 600,
-      "offset": 5
+      "offset": 300
     },
     "heat": {
       "temp": 100,
-      "offset": 30
+      "offset": 1800
     }
   }
 }
