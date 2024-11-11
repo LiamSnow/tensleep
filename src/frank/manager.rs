@@ -14,22 +14,20 @@ use crate::frank::types::*;
 
 pub type FrankStream = Arc<RwLock<Option<UnixStream>>>;
 
-pub fn init() -> FrankStream {
-    let stream = Arc::new(RwLock::<Option<UnixStream>>::new(None));
-
-    let streamcopy = stream.clone();
+pub fn init(stream: FrankStream) {
     thread::spawn(move || {
         let listener = match UnixListener::bind("/deviceinfo/dac.sock") {
             Ok(listener) => listener,
             Err(error) => {
-                panic!("Frank: failed to listen {:?}", error)
+                info!("Frank: failed to listen {:?}", error);
+                panic!();
             }
         };
         for newstream in listener.incoming() {
             match newstream {
                 Ok(newstream) => {
                     info!("Frank: new UNIX socket connection");
-                    let _ = streamcopy.write().unwrap().insert(newstream);
+                    let _ = stream.write().unwrap().insert(newstream);
                 }
                 Err(_) => continue,
             }
@@ -38,22 +36,20 @@ pub fn init() -> FrankStream {
 
     thread::spawn(|| {
         let listener = TcpListener::bind("0.0.0.0:1337").unwrap();
-        for stream in listener.incoming() {
-            let stream = match stream {
+        for stream_b in listener.incoming() {
+            let stream_c = match stream_b {
                 Err(_) => continue,
-                Ok(stream) => stream,
+                Ok(stream_d) => stream_d,
             };
             thread::spawn(move || {
-                handle_data_stream(stream);
+                handle_data_stream(stream_c);
             });
         }
     });
-
-    stream
 }
 
 // Just returns "ok" to show that communication with the firmware is working.
-pub fn hello(streamobj: &FrankStream) -> String {
+pub fn hello(streamobj: FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -77,7 +73,7 @@ pub fn hello(streamobj: &FrankStream) -> String {
 // waterLevel = true
 // priming = false
 // settings = "BF61760162676C190190626772190190626C6200FF"
-pub fn get_variables(streamobj: &FrankStream) -> String {
+pub fn get_variables(streamobj: FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -96,13 +92,13 @@ pub fn get_variables(streamobj: &FrankStream) -> String {
 // du: Duration in seconds?
 // tt: Timestamp in unix epoch for alarm
 // Presumably thermal alarm is controlled with the temperature commands
-pub fn set_alarm(side: BedSide, settings: &AlarmSettings, streamobj: &FrankStream) -> String {
+pub fn set_alarm(side: BedSide, settings: &AlarmSettings, streamobj: FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
 
     if side == BedSide::Both {
-        set_alarm(BedSide::Left, settings, streamobj);
+        set_alarm(BedSide::Left, settings, streamobj.clone());
         return set_alarm(BedSide::Right, settings, streamobj);
     }
 
@@ -125,7 +121,7 @@ pub fn set_alarm(side: BedSide, settings: &AlarmSettings, streamobj: &FrankStrea
     result
 }
 
-pub fn alarm_clear(streamobj: &FrankStream) -> String {
+pub fn alarm_clear(streamobj: FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -160,13 +156,13 @@ pub fn set_settings(data: &str, streamobj: &FrankStream) -> String {
 }
 
 // Takes an integer number of seconds, presumably until the heat ends, e.g. 7200.
-pub fn set_temperature_duration(side: BedSide, data: u32, streamobj: &FrankStream) -> String {
+pub fn set_temperature_duration(side: BedSide, data: u32, streamobj: FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
 
     if side == BedSide::Both {
-        set_temperature_duration(BedSide::Left, data, streamobj);
+        set_temperature_duration(BedSide::Left, data, streamobj.clone());
         return set_temperature_duration(BedSide::Right, data, streamobj);
     }
 
@@ -186,13 +182,13 @@ pub fn set_temperature_duration(side: BedSide, data: u32, streamobj: &FrankStrea
 }
 
 // Takes a signed integer number. May represent tenths of degrees of heating/cooling. e.g. -40 = -4°C.
-pub fn set_temperature(side: BedSide, data: i32, streamobj: &FrankStream) -> String {
+pub fn set_temperature(side: BedSide, data: i32, streamobj: FrankStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
 
     if side == BedSide::Both {
-        set_temperature(BedSide::Left, data, streamobj);
+        set_temperature(BedSide::Left, data, streamobj.clone());
         return set_temperature(BedSide::Right, data, streamobj);
     }
 
@@ -312,7 +308,7 @@ fn handle_batch(item: StreamItem, writer: &mut dyn Write) {
     }
 }
 
-fn handle_data_stream(stream: TcpStream) {
+pub fn handle_data_stream(stream: TcpStream) {
     info!("Frank: incoming TCP connection");
     let _ = stream.set_read_timeout(Some(Duration::new(60, 0)));
 

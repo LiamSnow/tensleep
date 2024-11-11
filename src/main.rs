@@ -1,52 +1,61 @@
+#[macro_use]
 extern crate rustc_serialize;
+
+use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use frank::{
+    manager::{self, FrankStream},
+    types::*,
+};
+use log::{debug, info, LevelFilter};
+use serde_json::json;
+use settings::Settings;
+use simplelog::{ColorChoice, CombinedLogger, TermLogger, TerminalMode, WriteLogger};
+use std::{
+    fs::File,
+    net::TcpListener,
+    os::unix::net::{UnixListener, UnixStream},
+    sync::{Arc, Mutex, RwLock},
+    thread,
+};
+use tokio::{task::{self, JoinHandle}, time};
 
 mod frank;
 mod scheduler;
 mod settings;
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::get,
-    Json, Router,
-};
-use frank::{
-    manager::{self, FrankStream},
-    types::*,
-};
-use log::{info, LevelFilter};
-use serde_json::json;
-use settings::Settings;
-use simplelog::{ColorChoice, CombinedLogger, TermLogger, TerminalMode, WriteLogger};
-use std::{fs::File, sync::{Arc, Mutex, OnceLock}};
-use tokio::task::{self, JoinHandle};
-
 struct AppState {
     settings: Mutex<Settings>,
     scheduler_task: Mutex<JoinHandle<()>>,
+    frank_stream: FrankStream,
 }
-
-static STREAM: OnceLock<FrankStream> = OnceLock::new();
 
 const SETTINGS_PATH: &str = "settings.json";
 
 #[tokio::main]
 async fn main() {
-    CombinedLogger::init(
-        vec![
-            TermLogger::new(LevelFilter::Debug, simplelog::Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
-            WriteLogger::new(LevelFilter::Debug, simplelog::Config::default(), File::create("tensleep.log").unwrap()),
-        ]
-    ).unwrap();
+    CombinedLogger::init(vec![
+        TermLogger::new(
+            LevelFilter::Debug,
+            simplelog::Config::default(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        ),
+        WriteLogger::new(
+            LevelFilter::Debug,
+            simplelog::Config::default(),
+            File::create("tensleep.log").unwrap(),
+        ),
+    ])
+    .unwrap();
 
     info!("Tensleep started. Connecting to stream...");
 
-    STREAM.get_or_init(|| manager::init());
+    let frank_stream = Arc::new(RwLock::<Option<UnixStream>>::new(None));
+    manager::init(frank_stream.clone());
 
-    if STREAM.get().unwrap().read().unwrap().is_none() {
-      info!("Failed to connect to stream!");
-      panic!();
+    while !manager::hello(frank_stream.clone()).contains("ok") {
+        time::sleep(time::Duration::from_secs(10)).await;
+        debug!("still connecting to stream...");
     }
 
     info!("Connected to stream!");
@@ -57,10 +66,8 @@ async fn main() {
     info!("Spawning scheduler task...");
     let state = Arc::new(AppState {
         settings: Mutex::new(settings.clone()),
-        scheduler_task: Mutex::new(task::spawn(scheduler::run(
-            settings,
-            &STREAM.get().unwrap(),
-        ))),
+        scheduler_task: Mutex::new(tokio::spawn(scheduler::run(settings, frank_stream.clone()))),
+        frank_stream,
     });
 
     info!("Creating axum router");
@@ -75,13 +82,23 @@ async fn main() {
         .unwrap();
 }
 
-async fn get_health() -> impl IntoResponse {
-    let res = manager::hello(STREAM.get().unwrap());
+async fn get_health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let res = manager::hello(state.frank_stream.clone());
     info!("Axum: health check got {res}");
-    if res == "ok" {
-        StatusCode::OK
+    if res.contains("ok") {
+        (
+            StatusCode::OK,
+            Json(json!({
+              "status": "OK"
+            }))
+        ).into_response()
     } else {
-        StatusCode::SERVICE_UNAVAILABLE
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+              "status": "UNAVAILABLE"
+            }))
+        ).into_response()
     }
 }
 
@@ -111,7 +128,7 @@ async fn post_settings(
 
     let mut task = state.scheduler_task.lock().unwrap();
     task.abort();
-    *task = task::spawn(scheduler::run(new_settings.clone(), &STREAM.get().unwrap()));
+    *task = task::spawn(scheduler::run(new_settings.clone(), state.frank_stream.clone()));
 
     match new_settings.save(SETTINGS_PATH) {
         Ok(_) => Json(json!({
