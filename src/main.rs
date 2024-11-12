@@ -2,8 +2,8 @@
 extern crate rustc_serialize;
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
-use frank::{
-    manager::{self, FrankStream},
+use dac::{
+    manager::{self, DacStream},
     types::*,
 };
 use log::{debug, info, LevelFilter};
@@ -19,14 +19,14 @@ use std::{
 };
 use tokio::{task::{self, JoinHandle}, time};
 
-mod frank;
+mod dac;
 mod scheduler;
 mod settings;
 
 struct AppState {
     settings: Mutex<Settings>,
     scheduler_task: Mutex<JoinHandle<()>>,
-    frank_stream: FrankStream,
+    dac_stream: DacStream,
 }
 
 const SETTINGS_PATH: &str = "settings.json";
@@ -50,10 +50,10 @@ async fn main() {
 
     info!("Tensleep started. Connecting to stream...");
 
-    let frank_stream = Arc::new(RwLock::<Option<UnixStream>>::new(None));
-    manager::init(frank_stream.clone());
+    let dac_stream = Arc::new(RwLock::<Option<UnixStream>>::new(None));
+    manager::init(dac_stream.clone());
 
-    while !manager::hello(frank_stream.clone()).contains("ok") {
+    while !manager::hello(dac_stream.clone()).contains("ok") {
         time::sleep(time::Duration::from_secs(10)).await;
         debug!("still connecting to stream...");
     }
@@ -64,10 +64,12 @@ async fn main() {
     let settings = Settings::from_file(SETTINGS_PATH).unwrap();
 
     info!("Spawning scheduler task...");
+    let scheduler_task = tokio::spawn(scheduler::run(settings.clone(), dac_stream.clone()));
+
     let state = Arc::new(AppState {
-        settings: Mutex::new(settings.clone()),
-        scheduler_task: Mutex::new(tokio::spawn(scheduler::run(settings, frank_stream.clone()))),
-        frank_stream,
+        settings: Mutex::new(settings),
+        scheduler_task: Mutex::new(scheduler_task),
+        dac_stream,
     });
 
     info!("Creating axum router");
@@ -83,7 +85,7 @@ async fn main() {
 }
 
 async fn get_health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let res = manager::hello(state.frank_stream.clone());
+    let res = manager::hello(state.dac_stream.clone());
     info!("Axum: health check got {res}");
     if res.contains("ok") {
         (
@@ -128,7 +130,7 @@ async fn post_settings(
 
     let mut task = state.scheduler_task.lock().unwrap();
     task.abort();
-    *task = task::spawn(scheduler::run(new_settings.clone(), state.frank_stream.clone()));
+    *task = tokio::spawn(scheduler::run(new_settings.clone(), state.dac_stream.clone()));
 
     match new_settings.save(SETTINGS_PATH) {
         Ok(_) => Json(json!({

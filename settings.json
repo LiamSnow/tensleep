@@ -1,18 +1,18 @@
 {
-  "temp_profile": [0, 10, 20],
-  "time_zone": "America/Los_Angeles",
-  "sleep_time": "10:00 PM",
+  "temp_profile": [-20, 0, 20],
+  "time_zone": "America/New_York",
+  "sleep_time": "12:00 AM",
   "alarm": {
-    "time": "10:30 AM",
+    "time": "11:00 AM",
     "vibration": {
       "pattern": "rise",
-      "intensity": 80,
-      "duration": 600,
-      "offset": 300
+      "intensity": 100,
+      "duration": 3600,
+      "offset": 0
     },
     "heat": {
       "temp": 100,
-      "offset": 1800
+      "offset": 600
     }
   }
 }

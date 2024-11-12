@@ -1,55 +1,41 @@
 use cbor::{Encoder, ToCbor};
-use log::{info, trace, warn};
+use log::info;
 use rustc_serialize::{json::Json, Encodable};
 use std::{
-    io::{BufReader, BufWriter, Read, Write},
-    net::{TcpListener, TcpStream},
+    io::{Read, Write},
     os::unix::net::{UnixListener, UnixStream},
     sync::{Arc, RwLock},
     thread,
     time::Duration,
 };
 
-use crate::frank::types::*;
+use crate::dac::types::*;
 
-pub type FrankStream = Arc<RwLock<Option<UnixStream>>>;
+pub type DacStream = Arc<RwLock<Option<UnixStream>>>;
 
-pub fn init(stream: FrankStream) {
+pub fn init(stream: DacStream) {
     thread::spawn(move || {
         let listener = match UnixListener::bind("/deviceinfo/dac.sock") {
             Ok(listener) => listener,
             Err(error) => {
-                info!("Frank: failed to listen {:?}", error);
+                info!("DAC: failed to listen {:?}", error);
                 panic!();
             }
         };
         for newstream in listener.incoming() {
             match newstream {
                 Ok(newstream) => {
-                    info!("Frank: new UNIX socket connection");
+                    info!("DAC: new UNIX socket connection");
                     let _ = stream.write().unwrap().insert(newstream);
                 }
                 Err(_) => continue,
             }
         }
     });
-
-    thread::spawn(|| {
-        let listener = TcpListener::bind("0.0.0.0:1337").unwrap();
-        for stream_b in listener.incoming() {
-            let stream_c = match stream_b {
-                Err(_) => continue,
-                Ok(stream_d) => stream_d,
-            };
-            thread::spawn(move || {
-                handle_data_stream(stream_c);
-            });
-        }
-    });
 }
 
 // Just returns "ok" to show that communication with the firmware is working.
-pub fn hello(streamobj: FrankStream) -> String {
+pub fn hello(streamobj: DacStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -73,7 +59,7 @@ pub fn hello(streamobj: FrankStream) -> String {
 // waterLevel = true
 // priming = false
 // settings = "BF61760162676C190190626772190190626C6200FF"
-pub fn get_variables(streamobj: FrankStream) -> String {
+pub fn get_variables(streamobj: DacStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -92,7 +78,7 @@ pub fn get_variables(streamobj: FrankStream) -> String {
 // du: Duration in seconds?
 // tt: Timestamp in unix epoch for alarm
 // Presumably thermal alarm is controlled with the temperature commands
-pub fn set_alarm(side: BedSide, settings: &AlarmSettings, streamobj: FrankStream) -> String {
+pub fn set_alarm(side: BedSide, settings: &AlarmSettings, streamobj: DacStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -121,7 +107,7 @@ pub fn set_alarm(side: BedSide, settings: &AlarmSettings, streamobj: FrankStream
     result
 }
 
-pub fn alarm_clear(streamobj: FrankStream) -> String {
+pub fn alarm_clear(streamobj: DacStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -135,7 +121,7 @@ pub fn alarm_clear(streamobj: FrankStream) -> String {
 }
 
 // Example CBOR: a1626c6200, a1626c621837. Controls light intensity.
-pub fn set_settings(data: &str, streamobj: &FrankStream) -> String {
+pub fn set_settings(data: &str, streamobj: &DacStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -156,7 +142,7 @@ pub fn set_settings(data: &str, streamobj: &FrankStream) -> String {
 }
 
 // Takes an integer number of seconds, presumably until the heat ends, e.g. 7200.
-pub fn set_temperature_duration(side: BedSide, data: u32, streamobj: FrankStream) -> String {
+pub fn set_temperature_duration(side: BedSide, data: u32, streamobj: DacStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -182,7 +168,7 @@ pub fn set_temperature_duration(side: BedSide, data: u32, streamobj: FrankStream
 }
 
 // Takes a signed integer number. May represent tenths of degrees of heating/cooling. e.g. -40 = -4°C.
-pub fn set_temperature(side: BedSide, data: i32, streamobj: FrankStream) -> String {
+pub fn set_temperature(side: BedSide, data: i32, streamobj: DacStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -208,7 +194,7 @@ pub fn set_temperature(side: BedSide, data: i32, streamobj: FrankStream) -> Stri
 }
 
 // Takes a boolean string. Unclear what true/false mean exactly, maybe on/off?
-pub fn prime(streamobj: FrankStream) -> String {
+pub fn prime(streamobj: DacStream) -> String {
     if streamobj.read().unwrap().is_none() {
         return "not connected".to_string();
     }
@@ -220,110 +206,4 @@ pub fn prime(streamobj: FrankStream) -> String {
     let mut result = String::new();
     let _ = stream.read_to_string(&mut result);
     result
-}
-
-fn handle_session(item: StreamItem, writer: &mut dyn Write) {
-    info!(
-        "Frank: session started for device {}",
-        item.dev.expect("expected device ID")
-    );
-    let _ = ciborium::into_writer::<StreamItem, &mut dyn Write>(
-        &StreamItem {
-            part: "session".into(),
-            proto: "raw".into(),
-            id: None,
-            version: None,
-            dev: None,
-            stream: None,
-        },
-        writer,
-    );
-    let _ = writer.flush();
-}
-
-fn handle_batch(item: StreamItem, writer: &mut dyn Write) {
-    let id = match item.id {
-        Some(id) => id,
-        None => {
-            warn!("Frank: no id was present for batch");
-            return;
-        }
-    };
-    info!("Frank: received batch {}", id);
-    let _ = ciborium::into_writer::<StreamItem, &mut dyn Write>(
-        &StreamItem {
-            id: Some(id),
-            proto: "raw".into(),
-            part: "batch".into(),
-            dev: None,
-            stream: None,
-            version: None,
-        },
-        writer,
-    );
-    let _ = writer.flush();
-
-    let datastream = match item.stream {
-        Some(stream) => stream,
-        None => {
-            warn!("Frank: no stream in batch");
-            return;
-        }
-    };
-    let mut reader = BufReader::new(datastream.as_slice());
-    loop {
-        let item: BatchItem = match ciborium::from_reader(&mut reader) {
-            Ok(item) => item,
-            Err(ciborium::de::Error::Io(error))
-                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                break;
-            }
-            Err(error) => {
-                warn!("Frank: failed to read batch item: {:?}", error);
-                break;
-            }
-        };
-        let seq = item.seq;
-        let item: BatchItemData = match ciborium::from_reader(item.data.as_slice()) {
-            Ok(item) => item,
-            Err(_) => {
-                match ciborium::from_reader::<ciborium::Value, &[u8]>(item.data.as_slice()) {
-                    Ok(item) => {
-                        warn!("Frank: failed to read batch item data, generic value: {:?}", item);
-                        continue;
-                    }
-                    Err(error) => {
-                        warn!(
-                            "Frank: failed to read batch item data. Data was {:?}. Error was {:?}",
-                            hex::encode(item.data),
-                            error
-                        );
-                        continue;
-                    }
-                };
-            }
-        };
-        trace!("Frank: batch item {} datum: {:?}", seq, item);
-    }
-}
-
-pub fn handle_data_stream(stream: TcpStream) {
-    info!("Frank: incoming TCP connection");
-    let _ = stream.set_read_timeout(Some(Duration::new(60, 0)));
-
-    let mut writer = BufWriter::new(&stream);
-    let mut reader = BufReader::new(&stream);
-
-    loop {
-        let item: StreamItem = ciborium::from_reader(&mut reader).unwrap();
-        match item.part.as_str() {
-            "session" => handle_session(item, &mut writer),
-            "batch" => handle_batch(item, &mut writer),
-            _ => {
-                warn!("Frank: unrecognized part {:?}", item.part);
-                continue;
-            }
-        }
-    }
 }

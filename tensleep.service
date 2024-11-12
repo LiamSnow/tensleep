@@ -1,6 +1,5 @@
 [Unit]
 Description=Tensleep
-Requires=capybara.service
 
 [Install]
 WantedBy=multi-user.target

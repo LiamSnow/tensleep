@@ -63,8 +63,8 @@ pub struct VibrationSettings {
 }
 
 impl VibrationSettings {
-    pub fn to_frank_alarm_settings(&self, timestamp: u64) -> crate::frank::types::AlarmSettings {
-        crate::frank::types::AlarmSettings {
+    pub fn to_dac_alarm_settings(&self, timestamp: u64) -> crate::dac::types::AlarmSettings {
+        crate::dac::types::AlarmSettings {
             pl: self.intensity,
             du: self.duration,
             pi: self.pattern.to_string(),
