@@ -42,6 +42,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.94"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1fd03a028ef38ba2276dce7e33fcd6369c158a1bca17946c4b1b701891c1ff7"
+
+[[package]]
 name = "async-trait"
 version = "0.1.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -894,6 +900,7 @@ checksum = "a7065abeca94b6a8a577f9bd45aa0867a2238b74e8eb67cf10d492bc39351394"
 name = "tensleep"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
  "cbor",
  "chrono",
@@ -901,7 +908,6 @@ dependencies = [
  "ciborium",
  "hex",
  "log",
- "rustc-serialize",
  "serde",
  "serde_bytes",
  "serde_json",

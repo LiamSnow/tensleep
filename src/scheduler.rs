@@ -1,44 +1,110 @@
-use chrono::{DateTime, Duration, TimeDelta, Utc};
+use std::sync::Arc;
+
+use tokio::sync::RwLock;
+
+use chrono::{DateTime, TimeDelta, Utc};
 use chrono_tz::Tz;
 use log::{debug, info};
 use tokio::time;
 
-use crate::{
-    dac::manager::{self, DacStream},
-    settings::Settings,
-    BedSide,
-};
+use crate::{dac::DacStream, settings::Settings};
 
-pub struct VibrateTiming {
+struct VibrateTiming {
     pub clear: DateTime<Tz>,
     pub set: DateTime<Tz>,
     pub alarm: DateTime<Tz>,
 }
 
-pub struct SchedulerTiming {
+struct SchedulerTiming {
     pub time_zone: Tz,
     pub vibrate_time: Option<VibrateTiming>,
     pub profile: Vec<(DateTime<Tz>, i32)>,
     ///seconds for last step in profile
-    pub profile_end_length: u32
+    pub profile_end_length: u32,
 }
 
 const DAY: TimeDelta = chrono::Duration::days(1);
 
-fn calc_times(settings: &Settings) -> SchedulerTiming {
+pub fn spawn(dac: Arc<DacStream>, settings: Arc<RwLock<Settings>>) {
+    tokio::spawn(async move {
+        loop {
+            run(dac.clone(), settings.clone()).await;
+        }
+    });
+}
+
+async fn run(dac: Arc<DacStream>, settings_ref: Arc<RwLock<Settings>>) {
+    info!("Scheduler: starting");
+    info!("Scheduler: calculating timing...");
+
+    let settings = settings_ref.read().await.clone();
+
+    let mut timing = calc_timing(&settings);
+
+    loop {
+        let new_settings = settings_ref.read().await;
+        if new_settings.clone() != settings {
+            info!("Scheduler: restarting with new settings!");
+            break;
+        }
+
+        let now = Utc::now().with_timezone(&timing.time_zone);
+
+        if let Some(vt) = &mut timing.vibrate_time {
+            if now >= vt.clear {
+                info!("Scheduler: clearing vibration alarm");
+                let _ = dac.alarm_clear().await;
+                vt.clear += DAY;
+            }
+
+            if now >= vt.set {
+                let ts = vt.alarm.timestamp().try_into().unwrap();
+                let vs = settings.alarm.vibration.clone().unwrap();
+                let ps = vs.make_event(ts);
+                info!("Scheduler: setting vibration alarm for {ts}. Mapped {vs:#?} -> {ps:#?}");
+                let _ = dac.set_alarm_both(&ps).await;
+                vt.alarm += DAY;
+                vt.set += DAY;
+            }
+        }
+
+        let pl = timing.profile.len();
+        for i in 0..pl {
+            if now < timing.profile[i].0 {
+                continue;
+            }
+
+            info!(
+                "Scheduler: at profile {i} -> temp to {}",
+                timing.profile[i].1
+            );
+            let duration = if i == (pl - 1) {
+                timing.profile_end_length
+            } else {
+                36000
+            };
+            let _ = dac.set_temp_both(timing.profile[i].1, duration).await;
+            timing.profile[i].0 += DAY;
+        }
+
+        time::sleep(time::Duration::from_secs(10)).await;
+    }
+}
+
+fn calc_timing(settings: &Settings) -> SchedulerTiming {
     let now = Utc::now().with_timezone(&settings.time_zone);
     let sleep_datetime = now.with_time(settings.sleep_time).unwrap();
     let mut alarm_datetime = now.with_time(settings.alarm.time).unwrap();
     if alarm_datetime < sleep_datetime {
-      alarm_datetime += DAY;
+        alarm_datetime += DAY;
     }
 
     debug!("Scheduler Timing: now = {now}, alarm_datetime = {alarm_datetime}, sleep_datetime = {sleep_datetime}");
 
     let vibrate_time = settings.alarm.vibration.clone().map(|v| {
         let alarm = alarm_datetime - TimeDelta::seconds(v.offset.into());
-        let set = alarm - Duration::hours(2);
-        let clear = alarm - Duration::hours(4);
+        let set = alarm - TimeDelta::hours(2);
+        let clear = alarm - TimeDelta::hours(4);
 
         debug!(
             "Scheduler Timing: vibrate_time = (clear: {}, set: {}, alarm: {})",
@@ -71,62 +137,17 @@ fn calc_times(settings: &Settings) -> SchedulerTiming {
     }
 
     let profile_end_length = (alarm_datetime - profile.last().unwrap().0).num_seconds() as u32;
-    debug!("Scheduler Timing: profile_end_length = {} - {} = {}", alarm_datetime, profile.last().unwrap().0, profile_end_length);
+    debug!(
+        "Scheduler Timing: profile_end_length = {} - {} = {}",
+        alarm_datetime,
+        profile.last().unwrap().0,
+        profile_end_length
+    );
 
     SchedulerTiming {
         vibrate_time,
         time_zone: settings.time_zone,
         profile,
-        profile_end_length
-    }
-}
-
-pub async fn run(settings: Settings, stream: DacStream) {
-    info!("Scheduler: starting");
-    info!("Scheduler: calculating timing...");
-    let mut times = calc_times(&settings);
-    loop {
-        while !manager::hello(stream.clone()).contains("ok") {
-            debug!("Scheduler: lost frank connection");
-            time::sleep(time::Duration::from_secs(10)).await;
-        }
-
-        // let vars = manager::get_variables(stream.clone());
-        // debug!("Scheduler: loop / frank vars {vars}");
-
-        let now = Utc::now().with_timezone(&times.time_zone);
-
-        if let Some(vt) = &mut times.vibrate_time {
-            if now >= vt.clear {
-                info!("Scheduler: clearing vibration alarm");
-                manager::alarm_clear(stream.clone());
-                vt.clear += DAY;
-            }
-
-            if now >= vt.set {
-                let ts = vt.alarm.timestamp().try_into().unwrap();
-                let vs = settings.alarm.vibration.clone().unwrap();
-                let ps = vs.to_dac_alarm_settings(ts);
-                info!("Scheduler: setting vibration alarm for {ts}. Mapped {vs:#?} -> {ps:#?}");
-                manager::set_alarm(BedSide::Both, &ps, stream.clone());
-                vt.alarm += DAY;
-                vt.set += DAY;
-            }
-        }
-
-        let pl = times.profile.len();
-        for i in 0..pl {
-            if now < times.profile[i].0 {
-                continue;
-            }
-
-            info!("Scheduler: at profile {i} -> temp to {}", times.profile[i].1);
-            manager::set_temperature(BedSide::Both, times.profile[i].1, stream.clone());
-            let duration = if i == (pl-1) { times.profile_end_length  } else { 36000 };
-            manager::set_temperature_duration(BedSide::Both, duration, stream.clone()); //10 hours
-            times.profile[i].0 += DAY;
-        }
-
-        time::sleep(time::Duration::from_secs(60)).await;
+        profile_end_length,
     }
 }

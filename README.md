@@ -7,8 +7,6 @@ Control the Eight Sleep Pod 3 locally and automatically!
 This project uses the Pod's existing firmware (`frankenfirmware`) but replaces the DAC and disables PizzaRat (& Capybara for now).
 Once setup, you __CANNOT__ use the Eight Sleep mobile app to control the bed.
 
-This project is build on top of work by `ninesleep`, see [Credits](#credits-).
-
 ## Features 😴
  1. Automatically set bed temperature every night
  2. Create a custom temperature profile
@@ -50,8 +48,9 @@ TODO
 TODO
 
 ## Credits 👏
-This project is built on top of the work done by [ninesleep](https://github.com/bobobo1618/ninesleep).
-Their license is included under [src/frank/LICENSE](src/frank/LICENSE) where a modified version of their code exists.
+This project was inspired by [ninesleep](https://github.com/bobobo1618/ninesleep).
+I have completely rewritten all of bobobo1618's code so the license is now
+excluded.
 
 ## Footnotes 📝
 This project is not affiliated with or endorsed by Eight Sleep.

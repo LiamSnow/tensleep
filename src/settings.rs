@@ -1,13 +1,12 @@
-use chrono::{NaiveTime, TimeDelta};
+use chrono::NaiveTime;
 use chrono_tz::Tz;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{fs, str::FromStr};
-
-use crate::VibrationPattern;
+use std::fs;
+use anyhow::Context;
 
 pub type TempProfile = [i32; 3];
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct Settings {
     ///offset from "neutral" temperature, °C*10 (IE -40 -> -4°C)
     pub temp_profile: TempProfile,
@@ -21,26 +20,26 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn from_file(path: &str) -> Option<Self> {
-        let file_contents = fs::read_to_string(path).ok()?;
-        Self::from_str(&file_contents).ok()
+    pub fn from_file(path: &str) -> anyhow::Result<Self> {
+        let file_contents = fs::read_to_string(path).context("Reading settings file")?;
+        Self::from_str(&file_contents).context("Parsing settings file")
     }
 
-    pub fn from_str(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+    pub fn from_str(json: &str) -> anyhow::Result<Self> {
+        Ok(serde_json::from_str(json)?)
     }
 
-    pub fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(self)
+    pub fn serialize(&self) -> anyhow::Result<String> {
+        Ok(serde_json::to_string(self)?)
     }
 
-    pub fn save(&self, path: &str) -> std::io::Result<()> {
+    pub fn save(&self, path: &str) -> anyhow::Result<()> {
         let json = self.serialize()?;
-        fs::write(path, json)
+        Ok(fs::write(path, json)?)
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct AlarmSettings {
     #[serde(
         deserialize_with = "deserialize_time",
@@ -51,7 +50,7 @@ pub struct AlarmSettings {
     pub heat: Option<HeatSettings>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct VibrationSettings {
     pub pattern: VibrationPattern,
     ///0-100
@@ -63,8 +62,8 @@ pub struct VibrationSettings {
 }
 
 impl VibrationSettings {
-    pub fn to_dac_alarm_settings(&self, timestamp: u64) -> crate::dac::types::AlarmSettings {
-        crate::dac::types::AlarmSettings {
+    pub fn make_event(&self, timestamp: u64) -> VibrationEvent {
+        VibrationEvent {
             pl: self.intensity,
             du: self.duration,
             pi: self.pattern.to_string(),
@@ -73,7 +72,41 @@ impl VibrationSettings {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VibrationEvent {
+    pub pl: u8,
+    pub du: u16,
+    pub pi: String,
+    pub tt: u64,
+}
+
+impl VibrationEvent {
+    pub fn to_cbor(&self) -> String {
+        let mut buffer = Vec::<u8>::new();
+        ciborium::into_writer(&self, &mut buffer).unwrap();
+        hex::encode(buffer)
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum VibrationPattern {
+    ///heavy
+    Double,
+    ///gentle
+    Rise
+}
+
+impl VibrationPattern {
+    pub fn to_string(&self) -> String {
+        match self {
+            VibrationPattern::Double => "double",
+            VibrationPattern::Rise => "rise",
+        }.to_string()
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize, PartialEq, Eq)]
 pub struct HeatSettings {
     pub temp: i32,
     ///seconds before alarm time

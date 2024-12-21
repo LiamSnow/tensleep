@@ -1,35 +1,24 @@
-#[macro_use]
-extern crate rustc_serialize;
-
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
-use dac::{
-    manager::{self, DacStream},
-    types::*,
-};
-use log::{debug, info, LevelFilter};
+use anyhow::Context;
+use axum::{extract::State, http::{header, StatusCode}, response::{IntoResponse, Response}, routing::get, Json, Router};
+use dac::DacStream;
+use log::{info, LevelFilter};
 use serde_json::json;
 use settings::Settings;
 use simplelog::{ColorChoice, CombinedLogger, TermLogger, TerminalMode, WriteLogger};
-use std::{
-    fs::File,
-    net::TcpListener,
-    os::unix::net::{UnixListener, UnixStream},
-    sync::{Arc, Mutex, RwLock},
-    thread,
-};
-use tokio::{task::{self, JoinHandle}, time};
+use std::{fs::File, sync::Arc};
+use tokio::sync::RwLock;
 
 mod dac;
 mod scheduler;
 mod settings;
 
-struct AppState {
-    settings: Mutex<Settings>,
-    scheduler_task: Mutex<JoinHandle<()>>,
-    dac_stream: DacStream,
-}
+const SETTINGS_FILE: &str = "settings.json";
+const LOG_FILE: &str = "tensleep.log";
 
-const SETTINGS_PATH: &str = "settings.json";
+struct AppState {
+    dac: Arc<DacStream>,
+    settings: Arc<RwLock<Settings>>,
+}
 
 #[tokio::main]
 async fn main() {
@@ -43,70 +32,107 @@ async fn main() {
         WriteLogger::new(
             LevelFilter::Debug,
             simplelog::Config::default(),
-            File::create("tensleep.log").unwrap(),
+            File::create(LOG_FILE).context("Making log file").unwrap(),
         ),
     ])
+    .context("Making combined logger")
     .unwrap();
 
-    info!("Tensleep started. Connecting to stream...");
+    info!("Tensleep started. Spawn DAC thread...");
+    let dac = DacStream::spawn().await.unwrap();
 
-    let dac_stream = Arc::new(RwLock::<Option<UnixStream>>::new(None));
-    manager::init(dac_stream.clone());
+    info!("Reading settings file: {SETTINGS_FILE}");
+    let init_settings = Settings::from_file(SETTINGS_FILE).unwrap();
+    let settings = Arc::new(RwLock::new(init_settings));
 
-    while !manager::hello(dac_stream.clone()).contains("ok") {
-        time::sleep(time::Duration::from_secs(10)).await;
-        debug!("still connecting to stream...");
-    }
+    info!("Spawning scheduler thread...");
+    scheduler::spawn(dac.clone(), settings.clone());
 
-    info!("Connected to stream!");
+    let state = Arc::new(AppState { dac, settings });
 
-    info!("Reading settings file: {SETTINGS_PATH}");
-    let settings = Settings::from_file(SETTINGS_PATH).unwrap();
-
-    info!("Spawning scheduler task...");
-    let scheduler_task = tokio::spawn(scheduler::run(settings.clone(), dac_stream.clone()));
-
-    let state = Arc::new(AppState {
-        settings: Mutex::new(settings),
-        scheduler_task: Mutex::new(scheduler_task),
-        dac_stream,
-    });
-
-    info!("Creating axum router");
+    info!("Creating Axum router");
     let app = Router::new()
         .route("/health", get(get_health))
+        .route("/state", get(get_state))
         .route("/settings", get(get_settings).post(post_settings))
+        .route("/prime", get(prime).post(prime))
         .with_state(state);
 
+    info!("Spawning Axum");
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app.into_make_service())
         .await
+        .context("Serving Axum")
         .unwrap();
 }
 
+async fn get_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.dac.get_variables().await {
+        Ok(r) => {
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/plain")
+                .body(r.into())
+                .unwrap_or_else(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to create response: {}", e),
+                    )
+                        .into_response()
+                })
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "Failed to get state/variables",
+                "details": e.to_string()
+            })),
+        )
+            .into_response(),
+    }
+}
+
 async fn get_health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let res = manager::hello(state.dac_stream.clone());
-    info!("Axum: health check got {res}");
-    if res.contains("ok") {
+    if state.dac.ping().await {
         (
             StatusCode::OK,
             Json(json!({
               "status": "OK"
-            }))
-        ).into_response()
+            })),
+        )
+            .into_response()
     } else {
         (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({
               "status": "UNAVAILABLE"
-            }))
-        ).into_response()
+            })),
+        )
+            .into_response()
     }
 }
 
+async fn prime(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.dac.prime().await {
+        Ok(r) => (
+            StatusCode::OK,
+            Json(json!({
+              "response": r
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+              "error": e.to_string()
+            })),
+        )
+            .into_response()
+    };
+}
+
 async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    info!("Axum: get settings"); //FIXME
-    let settings = state.settings.lock().unwrap();
+    let settings = state.settings.read().await;
     match settings.serialize() {
         Ok(serialized) => Json(serialized).into_response(),
         Err(e) => (
@@ -124,15 +150,11 @@ async fn post_settings(
     State(state): State<Arc<AppState>>,
     Json(new_settings): Json<Settings>,
 ) -> impl IntoResponse {
-    info!("Axum: set settings to {new_settings:#?}"); //FIXME
-    let mut settings = state.settings.lock().unwrap();
+    info!("Axum: set settings to {new_settings:#?}");
+    let mut settings = state.settings.write().await;
     *settings = new_settings.clone();
 
-    let mut task = state.scheduler_task.lock().unwrap();
-    task.abort();
-    *task = tokio::spawn(scheduler::run(new_settings.clone(), state.dac_stream.clone()));
-
-    match new_settings.save(SETTINGS_PATH) {
+    match new_settings.save(SETTINGS_FILE) {
         Ok(_) => Json(json!({
             "message": "Settings updated successfully",
             "settings": new_settings
