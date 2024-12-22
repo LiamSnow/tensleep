@@ -1,9 +1,9 @@
 use anyhow::Context;
-use axum::{extract::State, http::{header, StatusCode}, response::{IntoResponse, Response}, routing::get, Json, Router};
+use axum::{extract::{Path, State}, http::{header, StatusCode}, response::{IntoResponse, Response}, routing::get, Json, Router};
 use dac::DacStream;
 use log::{info, LevelFilter};
-use serde_json::json;
-use settings::Settings;
+use serde_json::{json, Value};
+use settings::{Settings, ByPath};
 use simplelog::{ColorChoice, CombinedLogger, TermLogger, TerminalMode, WriteLogger};
 use std::{fs::File, sync::Arc};
 use tokio::sync::RwLock;
@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 mod dac;
 mod scheduler;
 mod settings;
+mod test;
 
 const SETTINGS_FILE: &str = "settings.json";
 const LOG_FILE: &str = "tensleep.log";
@@ -55,7 +56,9 @@ async fn main() {
         .route("/health", get(get_health))
         .route("/state", get(get_state))
         .route("/settings", get(get_settings).post(post_settings))
+        .route("/setting/*path", get(get_setting).post(post_setting))
         .route("/prime", get(prime).post(prime))
+        .fallback(get_lost)
         .with_state(state);
 
     info!("Spawning Axum");
@@ -64,6 +67,10 @@ async fn main() {
         .await
         .context("Serving Axum")
         .unwrap();
+}
+
+async fn get_lost() -> impl IntoResponse {
+    (StatusCode::NOT_FOUND, "404 Not Found")
 }
 
 async fn get_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -77,8 +84,7 @@ async fn get_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         format!("Failed to create response: {}", e),
-                    )
-                        .into_response()
+                    ).into_response()
                 })
         }
         Err(e) => (
@@ -87,28 +93,25 @@ async fn get_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 "error": "Failed to get state/variables",
                 "details": e.to_string()
             })),
-        )
-            .into_response(),
+        ).into_response(),
     }
 }
 
 async fn get_health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    if state.dac.ping().await {
+    if state.dac.ping().await.is_ok() {
         (
             StatusCode::OK,
             Json(json!({
               "status": "OK"
             })),
-        )
-            .into_response()
+        ).into_response()
     } else {
         (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({
               "status": "UNAVAILABLE"
             })),
-        )
-            .into_response()
+        ).into_response()
     }
 }
 
@@ -119,15 +122,13 @@ async fn prime(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             Json(json!({
               "response": r
             })),
-        )
-            .into_response(),
+        ).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
               "error": e.to_string()
             })),
-        )
-            .into_response()
+        ).into_response()
     };
 }
 
@@ -141,8 +142,25 @@ async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 "error": "Failed to serialize settings",
                 "details": e.to_string()
             })),
-        )
-            .into_response(),
+        ).into_response(),
+    }
+}
+
+async fn get_setting(
+    State(state): State<Arc<AppState>>,
+    Path(path): Path<String>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+    info!("API: get setting {}", path);
+    match settings.get_at_path(path.split('/').collect()) {
+        Ok(Some(value)) => Json(value).into_response(),
+        Ok(None) => Json(Value::Null).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": e.to_string()
+            }))
+        ).into_response(),
     }
 }
 
@@ -150,7 +168,7 @@ async fn post_settings(
     State(state): State<Arc<AppState>>,
     Json(new_settings): Json<Settings>,
 ) -> impl IntoResponse {
-    info!("Axum: set settings to {new_settings:#?}");
+    info!("API: set settings to {new_settings:#?}");
     let mut settings = state.settings.write().await;
     *settings = new_settings.clone();
 
@@ -158,15 +176,45 @@ async fn post_settings(
         Ok(_) => Json(json!({
             "message": "Settings updated successfully",
             "settings": new_settings
-        }))
-        .into_response(),
+        })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
                 "error": "Failed to save settings",
                 "details": e.to_string()
             })),
-        )
-            .into_response(),
+        ).into_response(),
+    }
+}
+
+async fn post_setting(
+    State(state): State<Arc<AppState>>,
+    Path(path): Path<String>,
+    value: String,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+    info!("API: setting setting {} to {}", path, value);
+    let res = settings.set_at_path(path.split('/').collect(), value.to_string());
+    if let Err(e) = res {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": e.to_string(),
+            })),
+        ).into_response()
+    }
+
+    match settings.save(SETTINGS_FILE) {
+        Ok(_) => Json(json!({
+            "message": "Settings updated successfully",
+            "settings": *settings
+        })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "Failed to save settings",
+                "details": e.to_string()
+            })),
+        ).into_response(),
     }
 }

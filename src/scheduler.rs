@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use log::{debug, info};
 use tokio::time;
@@ -23,7 +23,7 @@ struct SchedulerTiming {
     pub profile_end_length: u32,
 }
 
-const DAY: TimeDelta = chrono::Duration::days(1);
+const DAY: Duration = Duration::days(1);
 
 pub fn spawn(dac: Arc<DacStream>, settings: Arc<RwLock<Settings>>) {
     tokio::spawn(async move {
@@ -61,8 +61,8 @@ async fn run(dac: Arc<DacStream>, settings_ref: Arc<RwLock<Settings>>) {
                 let ts = vt.alarm.timestamp().try_into().unwrap();
                 let vs = settings.alarm.vibration.clone().unwrap();
                 let ps = vs.make_event(ts);
-                info!("Scheduler: setting vibration alarm for {ts}. Mapped {vs:#?} -> {ps:#?}");
-                let _ = dac.set_alarm_both(&ps).await;
+                info!("Scheduler: setting vibration alarm for {ts}");
+                let _ = dac.set_alarm(&ps).await;
                 vt.alarm += DAY;
                 vt.set += DAY;
             }
@@ -83,7 +83,7 @@ async fn run(dac: Arc<DacStream>, settings_ref: Arc<RwLock<Settings>>) {
             } else {
                 36000
             };
-            let _ = dac.set_temp_both(timing.profile[i].1, duration).await;
+            let _ = dac.set_temp(timing.profile[i].1, duration).await;
             timing.profile[i].0 += DAY;
         }
 
@@ -99,15 +99,15 @@ fn calc_timing(settings: &Settings) -> SchedulerTiming {
         alarm_datetime += DAY;
     }
 
-    debug!("Scheduler Timing: now = {now}, alarm_datetime = {alarm_datetime}, sleep_datetime = {sleep_datetime}");
+    debug!("now = {now}, alarm_datetime = {alarm_datetime}, sleep_datetime = {sleep_datetime}");
 
     let vibrate_time = settings.alarm.vibration.clone().map(|v| {
-        let alarm = alarm_datetime - TimeDelta::seconds(v.offset.into());
-        let set = alarm - TimeDelta::hours(2);
-        let clear = alarm - TimeDelta::hours(4);
+        let alarm = alarm_datetime - Duration::seconds(v.offset.into());
+        let set = alarm - Duration::hours(2);
+        let clear = alarm - Duration::hours(4);
 
         debug!(
-            "Scheduler Timing: vibrate_time = (clear: {}, set: {}, alarm: {})",
+            "vibrate_time = (clear: {}, set: {}, alarm: {})",
             clear, set, alarm
         );
 
@@ -115,17 +115,17 @@ fn calc_timing(settings: &Settings) -> SchedulerTiming {
     });
 
     let mut total_time = alarm_datetime - sleep_datetime;
-    debug!("Scheduler Timing: total_time = {total_time}");
+    debug!("total_time = {total_time}");
     if settings.alarm.heat.is_some() {
-        let off = TimeDelta::seconds(settings.alarm.heat.clone().unwrap().offset.into());
+        let off = Duration::seconds(settings.alarm.heat.clone().unwrap().offset.into());
         total_time -= off;
         debug!(
-            "Scheduler Timing: heat alarm is included -> offsetting total_time by {} to {}",
+            "heat alarm is included -> offsetting total_time by {} to {}",
             off, total_time
         );
     }
     let step = total_time / 3;
-    debug!("Scheduler Timing: step = {step}");
+    debug!("step = {step}");
     let mut profile = vec![
         (sleep_datetime, settings.temp_profile[0]),
         (sleep_datetime + step, settings.temp_profile[1]),
@@ -133,12 +133,12 @@ fn calc_timing(settings: &Settings) -> SchedulerTiming {
     ];
 
     if let Some(h) = &settings.alarm.heat {
-        profile.push((alarm_datetime - TimeDelta::seconds(h.offset.into()), h.temp));
+        profile.push((alarm_datetime - Duration::seconds(h.offset.into()), h.temp));
     }
 
     let profile_end_length = (alarm_datetime - profile.last().unwrap().0).num_seconds() as u32;
     debug!(
-        "Scheduler Timing: profile_end_length = {} - {} = {}",
+        "profile_end_length = {} - {} = {}",
         alarm_datetime,
         profile.last().unwrap().0,
         profile_end_length

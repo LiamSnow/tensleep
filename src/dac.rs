@@ -1,8 +1,8 @@
 use std::{io::ErrorKind, sync::Arc, time::Duration};
 
-use log::info;
+use log::{debug, info};
 use tokio::{
-    fs, io::{AsyncReadExt, AsyncWriteExt}, net::{UnixListener, UnixStream}, sync::Mutex, time::timeout
+    fs, io::{AsyncWriteExt, AsyncBufReadExt, BufReader}, net::{UnixListener, UnixStream}, sync::Mutex, time::timeout
 };
 use anyhow::{anyhow, bail, Context};
 
@@ -36,8 +36,8 @@ impl DacStream {
             }
         });
 
-        if !me.ping().await {
-            bail!("DAC stream connected, but ping failed")
+        if let Err(e) = me.ping().await {
+            bail!("DAC stream connected, but ping failed: {}", e)
         }
 
         Ok(me)
@@ -65,48 +65,56 @@ impl DacStream {
         }
     }
 
-    async fn write_read(&self, command: &[u8]) -> anyhow::Result<String> {
+    async fn write_read(&self, bytes: &[u8]) -> anyhow::Result<String> {
         let mut stream_opt = self.stream_lock.lock().await;
-        let stream = stream_opt.as_mut().ok_or(anyhow!("Dac stream is None!"))?;
+        let stream = stream_opt.as_mut().ok_or(anyhow!("DAC stream is None!"))?;
         stream.writable().await?;
-        stream.write(command).await?;
+        stream.write(bytes).await?;
 
         stream.readable().await?;
-        let mut buffer = Vec::new();
-        let mut temp_buffer = [0u8; 1024];
+        let mut reader = BufReader::new(stream);
+        let read_result = timeout(Duration::from_secs(1), async {
+            //read until a double newline
+            let mut result = String::new();
+            let mut prev_ended = false;
+            loop {
+                let mut line = String::new();
+                let bytes_read = reader.read_line(&mut line).await?;
 
-        loop {
-            //TODO find acutal end of stream
-            match timeout(Duration::from_millis(50), stream.read(&mut temp_buffer)).await {
-                Ok(Ok(0)) => break,
-                Ok(Ok(n)) => buffer.extend_from_slice(&temp_buffer[..n]),
-                Ok(Err(e)) => return Err(e.into()),
-                Err(_) => {
-                    info!("254 timeout, partial response: {} bytes", buffer.len());
+                if bytes_read == 0 {
+                    bail!("DAC got unexpected end of stream");
+                }
+                result.push_str(&line);
+
+                if line == "\n" && prev_ended {
                     break;
                 }
+                prev_ended = line.ends_with('\n');
             }
-        }
+            Ok(result)
+        }).await;
 
-        Ok(String::from_utf8_lossy(&buffer).into_owned())
+        match read_result {
+            Ok(result) => result,
+            Err(_) => bail!("Timeout occurred while reading from DAC"),
+        }
     }
 
-    //TODO response
     async fn command(&self, command: u8) -> anyhow::Result<String> {
         self.write_read(format!("{}\n\n", command).as_bytes()).await
     }
 
-    async fn command_with_data(&self, command: u8, data: String) -> anyhow::Result<String> {
+    async fn command_with_data(&self, command: u8, data: &str) -> anyhow::Result<String> {
         self.write_read(format!("{}\n{}\n\n", command, data).as_bytes())
             .await
     }
 
     /// sends "hello" command and returns if it responds "ok"
-    pub async fn ping(&self) -> bool {
-        let res = self.command(0).await;
-        match res {
-            Ok(o) => o.contains("ok"),
-            Err(_) => false,
+    pub async fn ping(&self) -> anyhow::Result<()> {
+        let res = self.command(0).await?;
+        match res.contains("ok") {
+            true => Ok(()),
+            false => bail!("Bad ping response"),
         }
     }
 
@@ -122,28 +130,31 @@ impl DacStream {
         self.command(16).await
     }
 
-    pub async fn set_alarm_both(&self, settings: &VibrationEvent) -> anyhow::Result<String> {
-        self.set_alarm(BedSide::Left, settings).await?;
-        self.set_alarm(BedSide::Right, settings).await
+    pub async fn set_alarm(&self, settings: &VibrationEvent) -> anyhow::Result<String> {
+        let cbor = settings.to_cbor();
+        debug!("setting alarm to {}", cbor);
+        self.command_with_data(5, &cbor).await?;
+        self.command_with_data(6, &cbor).await
     }
 
-    pub async fn set_alarm(&self, side: BedSide, settings: &VibrationEvent) -> anyhow::Result<String> {
+    pub async fn set_alarm_for_side(&self, side: BedSide, settings: &VibrationEvent) -> anyhow::Result<String> {
         let command = if side == BedSide::Left { 5 } else { 6 };
-        self.command_with_data(command, settings.to_cbor()).await
+        self.command_with_data(command, &settings.to_cbor()).await
     }
 
     //TODO turn light off
 
-    pub async fn set_temp_both(&self, temp: i32, duration: u32) -> anyhow::Result<String> {
-        self.set_temp(BedSide::Left, temp, duration).await?;
-        self.set_temp(BedSide::Right, temp, duration).await
+    pub async fn set_temp(&self, temp: i32, duration: u32) -> anyhow::Result<String> {
+        self.command_with_data(9, &duration.to_string()).await?;
+        self.command_with_data(10, &duration.to_string()).await?;
+        self.command_with_data(11, &temp.to_string()).await?;
+        self.command_with_data(12, &temp.to_string()).await
     }
 
-    pub async fn set_temp(&self, side: BedSide, temp: i32, duration: u32) -> anyhow::Result<String> {
-        let temp_cmd = if side == BedSide::Left { 11 } else { 12 };
-        self.command_with_data(temp_cmd, temp.to_string()).await?;
-
+    pub async fn set_temp_for_side(&self, side: BedSide, temp: i32, duration: u32) -> anyhow::Result<String> {
         let dur_cmd = if side == BedSide::Left { 9 } else { 10 };
-        self.command_with_data(dur_cmd, duration.to_string()).await
+        self.command_with_data(dur_cmd, &duration.to_string()).await?;
+        let temp_cmd = if side == BedSide::Left { 11 } else { 12 };
+        self.command_with_data(temp_cmd, &temp.to_string()).await
     }
 }
