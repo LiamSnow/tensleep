@@ -7,7 +7,7 @@ use chrono_tz::Tz;
 use log::{debug, info};
 use tokio::time;
 
-use crate::{frank::FrankStream, settings::TenSettings};
+use crate::{frank::FrankStream, settings::{TenSettings, WatchedTenSettings}};
 
 struct VibrateTiming {
     pub clear: DateTime<Tz>,
@@ -25,7 +25,7 @@ struct SchedulerTiming {
 
 const DAY: Duration = Duration::days(1);
 
-pub fn spawn(dac: Arc<FrankStream>, settings: Arc<RwLock<TenSettings>>) {
+pub fn spawn(dac: Arc<FrankStream>, settings: Arc<RwLock<WatchedTenSettings>>) {
     tokio::spawn(async move {
         loop {
             run(dac.clone(), settings.clone()).await;
@@ -33,18 +33,20 @@ pub fn spawn(dac: Arc<FrankStream>, settings: Arc<RwLock<TenSettings>>) {
     });
 }
 
-async fn run(dac: Arc<FrankStream>, settings_ref: Arc<RwLock<TenSettings>>) {
+// TODO FIXME if settings are updated and current_time > alarm_time
+// it still sets bed temp
+async fn run(dac: Arc<FrankStream>, settings_ref: Arc<RwLock<WatchedTenSettings>>) {
     info!("Scheduler: starting");
     info!("Scheduler: calculating timing...");
 
     let settings = settings_ref.read().await.clone();
 
-    let mut timing = calc_timing(&settings);
+    let mut timing = calc_timing(&settings.settings);
 
     loop {
         let new_settings = settings_ref.read().await;
-        if new_settings.clone() != settings {
-            info!("Scheduler: restarting with new settings!");
+        if *new_settings != settings {
+            info!("Scheduler: restarting with new settings (change {})!", new_settings.get_change_number());
             break;
         }
 
@@ -59,7 +61,7 @@ async fn run(dac: Arc<FrankStream>, settings_ref: Arc<RwLock<TenSettings>>) {
 
             if now >= vt.set {
                 let ts = vt.alarm.timestamp().try_into().unwrap();
-                let vs = settings.alarm.vibration.clone().unwrap();
+                let vs = settings.settings.alarm.vibration.clone().unwrap();
                 let ps = vs.make_event(ts);
                 info!("Scheduler: setting vibration alarm for {ts}");
                 let _ = dac.set_alarm(&ps).await;

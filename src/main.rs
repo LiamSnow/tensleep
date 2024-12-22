@@ -1,9 +1,9 @@
 use anyhow::Context;
-use axum::{extract::{Path, State}, http::{header, StatusCode}, response::{IntoResponse, Response}, routing::get, Json, Router};
+use axum::{extract::{Path, State}, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
 use frank::FrankStream;
 use log::{info, LevelFilter};
 use serde_json::{json, Value};
-use settings::{TenSettings, ByPath};
+use settings::{WatchedTenSettings, TenSettings, ByPath};
 use simplelog::{ColorChoice, CombinedLogger, TermLogger, TerminalMode, WriteLogger};
 use std::{fs::File, sync::Arc};
 use tokio::sync::RwLock;
@@ -18,7 +18,7 @@ const LOG_FILE: &str = "tensleep.log";
 
 struct AppState {
     dac: Arc<FrankStream>,
-    settings: Arc<RwLock<TenSettings>>,
+    settings: Arc<RwLock<WatchedTenSettings>>,
 }
 
 #[tokio::main]
@@ -44,7 +44,7 @@ async fn main() {
 
     info!("Reading settings file: {SETTINGS_FILE}");
     let init_settings = TenSettings::from_file(SETTINGS_FILE).unwrap();
-    let settings = Arc::new(RwLock::new(init_settings));
+    let settings = Arc::new(RwLock::new(WatchedTenSettings::new(init_settings)));
 
     info!("Spawning scheduler thread...");
     scheduler::spawn(dac.clone(), settings.clone());
@@ -133,7 +133,7 @@ async fn prime(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let settings = state.settings.read().await;
-    match settings.serialize() {
+    match settings.settings.serialize() {
         Ok(serialized) => Json(serialized).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -151,7 +151,7 @@ async fn get_setting(
 ) -> impl IntoResponse {
     let settings = state.settings.read().await;
     info!("API: get setting {}", path);
-    match settings.get_at_path(path.split('/').collect()) {
+    match settings.settings.get_at_path(path.split('/').collect()) {
         Ok(Some(value)) => Json(value).into_response(),
         Ok(None) => Json(Value::Null).into_response(),
         Err(e) => (
@@ -169,7 +169,7 @@ async fn post_settings(
 ) -> impl IntoResponse {
     info!("API: set settings to {new_settings:#?}");
     let mut settings = state.settings.write().await;
-    *settings = new_settings.clone();
+    settings.change(new_settings.clone());
 
     match new_settings.save(SETTINGS_FILE) {
         Ok(_) => Json(json!({
@@ -193,7 +193,8 @@ async fn post_setting(
 ) -> impl IntoResponse {
     let mut settings = state.settings.write().await;
     info!("API: setting setting {} to {}", path, value);
-    let res = settings.set_at_path(path.split('/').collect(), value.to_string());
+    let res = settings.settings.set_at_path(path.split('/').collect(), value.to_string());
+    settings.mark();
     if let Err(e) = res {
         return (
             StatusCode::BAD_REQUEST,
@@ -203,10 +204,10 @@ async fn post_setting(
         ).into_response()
     }
 
-    match settings.save(SETTINGS_FILE) {
+    match settings.settings.save(SETTINGS_FILE) {
         Ok(_) => Json(json!({
             "message": "Setting updated successfully",
-            "settings": *settings
+            "settings": settings.settings
         })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

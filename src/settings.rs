@@ -10,7 +10,13 @@ const TIME_FORMAT: &str = "%I:%M %p";
 
 pub type TempProfile = [i32; 3];
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
+pub struct WatchedTenSettings {
+    change_number: u32,
+    pub settings: TenSettings
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TenSettings {
     ///offset from "neutral" temperature, °C*10 (IE -40 -> -4°C)
     pub temp_profile: TempProfile,
@@ -23,7 +29,7 @@ pub struct TenSettings {
     pub alarm: AlarmSettings,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AlarmSettings {
     #[serde(
         deserialize_with = "deserialize_time",
@@ -34,7 +40,7 @@ pub struct AlarmSettings {
     pub heat: Option<HeatSettings>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct VibrationSettings {
     pub pattern: VibrationPattern,
     ///0-100
@@ -53,7 +59,7 @@ pub struct VibrationEvent {
     pub tt: u64,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum VibrationPattern {
     ///heavy
@@ -62,13 +68,38 @@ pub enum VibrationPattern {
     Rise,
 }
 
-#[derive(Debug, Deserialize, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct HeatSettings {
     pub temp: i32,
     ///seconds before alarm time
     pub offset: u16,
 }
 
+
+impl WatchedTenSettings {
+    pub fn new(settings: TenSettings) -> Self {
+        Self { settings, change_number: 0 }
+    }
+
+    pub fn mark(&mut self) {
+        self.change_number += 1;
+    }
+
+    pub fn get_change_number(&self) -> u32 {
+        self.change_number
+    }
+
+    pub fn change(&mut self, new_settings: TenSettings) {
+        self.settings = new_settings;
+        self.mark();
+    }
+}
+
+impl PartialEq for WatchedTenSettings {
+    fn eq(&self, other: &Self) -> bool {
+        self.change_number == other.change_number
+    }
+}
 
 impl TenSettings {
     pub fn from_file(path: &str) -> anyhow::Result<Self> {
