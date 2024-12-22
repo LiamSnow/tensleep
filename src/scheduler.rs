@@ -7,7 +7,7 @@ use chrono_tz::Tz;
 use log::{debug, info};
 use tokio::time;
 
-use crate::{dac::DacStream, settings::Settings};
+use crate::{frank::FrankStream, settings::Settings};
 
 struct VibrateTiming {
     pub clear: DateTime<Tz>,
@@ -25,7 +25,7 @@ struct SchedulerTiming {
 
 const DAY: Duration = Duration::days(1);
 
-pub fn spawn(dac: Arc<DacStream>, settings: Arc<RwLock<Settings>>) {
+pub fn spawn(dac: Arc<FrankStream>, settings: Arc<RwLock<Settings>>) {
     tokio::spawn(async move {
         loop {
             run(dac.clone(), settings.clone()).await;
@@ -33,7 +33,7 @@ pub fn spawn(dac: Arc<DacStream>, settings: Arc<RwLock<Settings>>) {
     });
 }
 
-async fn run(dac: Arc<DacStream>, settings_ref: Arc<RwLock<Settings>>) {
+async fn run(dac: Arc<FrankStream>, settings_ref: Arc<RwLock<Settings>>) {
     info!("Scheduler: starting");
     info!("Scheduler: calculating timing...");
 

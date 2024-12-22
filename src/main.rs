@@ -1,6 +1,6 @@
 use anyhow::Context;
 use axum::{extract::{Path, State}, http::{header, StatusCode}, response::{IntoResponse, Response}, routing::get, Json, Router};
-use dac::DacStream;
+use frank::FrankStream;
 use log::{info, LevelFilter};
 use serde_json::{json, Value};
 use settings::{Settings, ByPath};
@@ -8,7 +8,7 @@ use simplelog::{ColorChoice, CombinedLogger, TermLogger, TerminalMode, WriteLogg
 use std::{fs::File, sync::Arc};
 use tokio::sync::RwLock;
 
-mod dac;
+mod frank;
 mod scheduler;
 mod settings;
 mod test;
@@ -17,7 +17,7 @@ const SETTINGS_FILE: &str = "settings.json";
 const LOG_FILE: &str = "tensleep.log";
 
 struct AppState {
-    dac: Arc<DacStream>,
+    dac: Arc<FrankStream>,
     settings: Arc<RwLock<Settings>>,
 }
 
@@ -39,8 +39,8 @@ async fn main() {
     .context("Making combined logger")
     .unwrap();
 
-    info!("Tensleep started. Spawn DAC thread...");
-    let dac = DacStream::spawn().await.unwrap();
+    info!("Tensleep started. Connecting to frankenfirmware...");
+    let dac = FrankStream::spawn().await.unwrap();
 
     info!("Reading settings file: {SETTINGS_FILE}");
     let init_settings = Settings::from_file(SETTINGS_FILE).unwrap();
@@ -74,23 +74,22 @@ async fn get_lost() -> impl IntoResponse {
 }
 
 async fn get_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.dac.get_variables().await {
-        Ok(r) => {
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "text/plain")
-                .body(r.into())
-                .unwrap_or_else(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Failed to create response: {}", e),
-                    ).into_response()
-                })
-        }
+    let variables = state.dac.get_state().await;
+    if let Err(e) = variables {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "Failed to get state",
+                "details": e.to_string()
+            })),
+        ).into_response()
+    }
+    match variables.unwrap().serialize() {
+        Ok(serialized) => Json(serialized).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
-                "error": "Failed to get state/variables",
+                "error": "Failed to serialize state",
                 "details": e.to_string()
             })),
         ).into_response(),
