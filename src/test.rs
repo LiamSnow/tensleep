@@ -4,11 +4,11 @@ mod tests {
     use chrono::NaiveTime;
     use chrono_tz::Tz;
 
-    use crate::settings::{Settings, VibrationPattern};
+    use crate::settings::{TenSettings, VibrationPattern};
 
     #[test]
     fn test_deserialize_settings() {
-        let settings = Settings::from_str(
+        let settings = TenSettings::from_str(
             r#"
         {
             "temp_profile": [-10, 10, 20],

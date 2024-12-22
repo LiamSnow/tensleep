@@ -11,7 +11,7 @@ const TIME_FORMAT: &str = "%I:%M %p";
 pub type TempProfile = [i32; 3];
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
-pub struct Settings {
+pub struct TenSettings {
     ///offset from "neutral" temperature, °C*10 (IE -40 -> -4°C)
     pub temp_profile: TempProfile,
     pub time_zone: Tz,
@@ -70,7 +70,7 @@ pub struct HeatSettings {
 }
 
 
-impl Settings {
+impl TenSettings {
     pub fn from_file(path: &str) -> anyhow::Result<Self> {
         let file_contents = fs::read_to_string(path).context("Reading settings file")?;
         Self::from_str(&file_contents).context("Parsing settings file")
@@ -174,7 +174,7 @@ pub trait ByPath {
     fn set_at_path(&mut self, path: Vec<&str>, value: String) -> anyhow::Result<()>;
 }
 
-impl ByPath for Settings {
+impl ByPath for TenSettings {
     fn get_at_path(&self, path: Vec<&str>) -> anyhow::Result<Option<Value>> {
         if path.len() < 1 { bail!("Path is too short"); }
         Ok(match path[0] {

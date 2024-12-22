@@ -3,7 +3,7 @@ use axum::{extract::{Path, State}, http::{header, StatusCode}, response::{IntoRe
 use frank::FrankStream;
 use log::{info, LevelFilter};
 use serde_json::{json, Value};
-use settings::{Settings, ByPath};
+use settings::{TenSettings, ByPath};
 use simplelog::{ColorChoice, CombinedLogger, TermLogger, TerminalMode, WriteLogger};
 use std::{fs::File, sync::Arc};
 use tokio::sync::RwLock;
@@ -18,7 +18,7 @@ const LOG_FILE: &str = "tensleep.log";
 
 struct AppState {
     dac: Arc<FrankStream>,
-    settings: Arc<RwLock<Settings>>,
+    settings: Arc<RwLock<TenSettings>>,
 }
 
 #[tokio::main]
@@ -43,7 +43,7 @@ async fn main() {
     let dac = FrankStream::spawn().await.unwrap();
 
     info!("Reading settings file: {SETTINGS_FILE}");
-    let init_settings = Settings::from_file(SETTINGS_FILE).unwrap();
+    let init_settings = TenSettings::from_file(SETTINGS_FILE).unwrap();
     let settings = Arc::new(RwLock::new(init_settings));
 
     info!("Spawning scheduler thread...");
@@ -165,7 +165,7 @@ async fn get_setting(
 
 async fn post_settings(
     State(state): State<Arc<AppState>>,
-    Json(new_settings): Json<Settings>,
+    Json(new_settings): Json<TenSettings>,
 ) -> impl IntoResponse {
     info!("API: set settings to {new_settings:#?}");
     let mut settings = state.settings.write().await;
@@ -205,7 +205,7 @@ async fn post_setting(
 
     match settings.save(SETTINGS_FILE) {
         Ok(_) => Json(json!({
-            "message": "Settings updated successfully",
+            "message": "Setting updated successfully",
             "settings": *settings
         })).into_response(),
         Err(e) => (
