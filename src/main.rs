@@ -169,6 +169,7 @@ async fn post_settings(
 ) -> impl IntoResponse {
     info!("API: set settings to {new_settings:#?}");
     let mut settings = state.settings.write().await;
+    //TODO TODO TODO TODO MAKE A CHANNEL
     settings.change(new_settings.clone());
 
     match new_settings.save(SETTINGS_FILE) {

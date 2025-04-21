@@ -1,4 +1,4 @@
-# Ten Sleep 🛌💤🔟
+# Ten Sleep
 
 Control the Eight Sleep Pod 3 locally and automatically!
 
@@ -6,13 +6,13 @@ Ten Sleep communicates with the bed's firmware (`frakenfirmware`) by pretending
 to be the DAC. This means that, once setup, you __CANNOT__ use the Eight Sleep
 mobile app to control the bed.
 
-## Features 😴
+## Features
  1. Automatically set bed temperature every night
  2. Create a custom temperature profile
  3. Set a heat and/or vibration wakeup alarm
  4. Control settings and monitor remotely via API
 
-## Setup 🥱
+## Setup
 To use Ten Sleep you must disassemble the Eight Sleep Pod 3, modify the SD card's `rootfs.tar.gz`
 to add your SSH key + root password, and reset the Pod. Then power the Pod while holding the small
 button on the back, which performs a factory reset from `rootfs.tar.gz`. Now you can disable
@@ -24,7 +24,7 @@ Eventually I will add thorough tutorial for this, but for now I would recommend
 [Bo Lopker's Tutorial](https://blopker.com/writing/04-zerosleep-1/#disassembly-overview)
 and the [ninesleep instructions](https://github.com/bobobo1618/ninesleep?tab=readme-ov-file#instructions).
 
-### Adding Ten Sleep 🔟
+### Adding Ten Sleep
 
 Build with:
 
@@ -40,7 +40,7 @@ cargo build --target aarch64-unknown-linux-musl
  6. Stop the DAC `systemctl disable --now dac`
  7. Enable the Ten Sleep `systemctl enable --now tensleep`
 
-## API 🔌
+## API
 
 The entire API is JSON based.
 
@@ -133,12 +133,12 @@ __Settings Format__:
 
 
 
-## Credits 👏
+## Credits
 This project was inspired by [ninesleep](https://github.com/bobobo1618/ninesleep).
 I have completely rewritten all of bobobo1618's code so the license is now
 excluded.
 
-## Footnotes 📝
+## Footnotes
 This project is not affiliated with or endorsed by Eight Sleep.
 
 If you encounter issues with this project please make an
